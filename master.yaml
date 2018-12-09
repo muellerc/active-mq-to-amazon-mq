@@ -1,0 +1,445 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploys an Amazon MQ broker.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: DEV
+    Description: The stage into we deploy this template.
+
+  MQBrokerUserName:
+    Type: String
+    Default: AmazonMQBrokerUserName
+    Description: The name of the Amazon MQ broker user.
+
+  MQBrokerPassword:
+    NoEcho: true
+    Type: String
+    Default: AmazonMQBrokerPassword
+    Description: The password of the Amazon MQ broker user.
+
+Resources:
+####################
+# Amazon MQ set-up #
+####################
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.111.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: !Join [ ':', [ !Ref 'AWS::StackName', 'VPC' ] ]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Join [ ':', [ !Ref 'AWS::StackName', 'InternetGateway' ] ]
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Join [ ':', [ !Ref 'AWS::StackName', 'RouteTable' ] ]
+
+  Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.111.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+      - Key: Name
+        Value: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnet1' ] ]
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.111.1.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+      - Key: Name
+        Value: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnet2' ] ]
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref RouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref RouteTable
+
+  AmazonMQSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Limits security group ingress and egress traffic for the Amazon MQ instance
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 8162
+        ToPort: 8162
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 61617
+        ToPort: 61617
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 5671
+        ToPort: 5671
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 61614
+        ToPort: 61614
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 8883
+        ToPort: 8883
+        CidrIp: 0.0.0.0/0
+
+  AmazonMQBroker:
+    Type: AWS::AmazonMQ::Broker
+    Properties: 
+      AutoMinorVersionUpgrade: false
+      BrokerName: AmazonMQBroker
+      DeploymentMode: SINGLE_INSTANCE  # use ACTIVE_STANDBY_MULTI_AZ for high availability and resiliency
+      EngineType: ActiveMQ
+      EngineVersion: 5.15.6
+      HostInstanceType: mq.m5.large
+      Logs:
+        General: true
+        Audit: true
+      PubliclyAccessible: true
+      SecurityGroups:
+        - !Ref AmazonMQSecurityGroup
+      SubnetIds:
+        - !Ref PublicSubnet1
+# for single instance, we only need one subnet
+#        - !Ref PublicSubnet2
+      Users: 
+        - 
+          ConsoleAccess: true
+          Groups: 
+            - Admin
+          Password: 
+            Ref: MQBrokerPassword
+          Username: 
+            Ref: MQBrokerUserName
+
+############################
+# sample jms client set-up #
+############################
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs-tasks.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  SampleJmsClientSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Limits security group ingress and egress traffic for the sample JMS client instance
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}:SampleJmsClientSecurityGroup'
+
+  SampleJmsClientECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: sample-jms-client-cluster
+
+  SampleJmsClientECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn : AmazonMQBroker
+    Properties:
+      Family: sample-jms-client-task
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !Ref ECSTaskExecutionRole
+      ContainerDefinitions:
+        - Name: sample-jms-client-task
+          Cpu: 256
+          Memory: 512
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/active-mq-to-amazon-mq/sample-jms-client:latest'
+          Environment:
+            - Name: AMAZONMQ_URL
+              Value: !Sub 'failover:(ssl://${AmazonMQBroker}-1.mq.${AWS::Region}.amazonaws.com:61617)'
+            - Name: AMAZONMQ_USER
+              Value: !Ref MQBrokerUserName
+            - Name: AMAZONMQ_PASSWORD
+              Value: !Ref MQBrokerPassword
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref SampleJmsClientCloudWatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: sample-jms-client-generator
+
+  SampleJmsClientCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: cmr/ecs/smaple-jms-client-cluster
+      RetentionInDays: 30
+
+  SampleJmsClientECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: sample-jms-client-service
+      Cluster: !Ref SampleJmsClientECSCluster
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED # to be able to download images from ECR
+          SecurityGroups:
+            - !Ref SampleJmsClientSecurityGroup
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+      TaskDefinition: !Ref SampleJmsClientECSTaskDefinition
+
+#######################################
+# Apache Active MQ on-premises set-up #
+#######################################
+
+  VPCOP:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.11.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: !Join [ ':', [ !Ref 'AWS::StackName', 'VPCOP' ] ]
+
+  InternetGatewayOP:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Join [ ':', [ !Ref 'AWS::StackName', 'InternetGatewayOP' ] ]
+
+  VPCGatewayAttachmentOP:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPCOP
+      InternetGatewayId: !Ref InternetGatewayOP
+
+  RouteTableOP:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCOP
+      Tags:
+      - Key: Name
+        Value: !Join [ ':', [ !Ref 'AWS::StackName', 'RouteTableOP' ] ]
+
+  RouteOP:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableOP
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGatewayOP
+
+  PublicSubnet1OP:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPCOP
+      CidrBlock: 10.11.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+      - Key: Name
+        Value: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnet1OP' ] ]
+
+  PublicSubnet2OP:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPCOP
+      CidrBlock: 10.11.1.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+      - Key: Name
+        Value: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnet2OP' ] ]
+
+  PublicSubnet1RouteTableAssociationOP:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1OP
+      RouteTableId: !Ref RouteTableOP
+
+  PublicSubnet2RouteTableAssociationOP:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2OP
+      RouteTableId: !Ref RouteTableOP
+
+  ApacheActiveMQSecurityGroupOP:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Limits security group ingress and egress traffic for the Apache Active MQ instance
+      VpcId: !Ref VPCOP
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 8161
+        ToPort: 8161
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 61616
+        ToPort: 61616
+        CidrIp: 0.0.0.0/0
+
+  ECSTaskExecutionRoleOP:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs-tasks.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  ApacheActiveMQECSClusterOP:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: apache-active-mq-cluster
+
+  ApacheActiveMQECSTaskDefinitionOP:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn : AmazonMQBroker
+    Properties:
+      Family: apache-active-mq-broker-task
+      Cpu: 512
+      Memory: 1024
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !Ref ECSTaskExecutionRoleOP
+      ContainerDefinitions:
+        - Name: apache-active-mq
+          Cpu: 512
+          Memory: 1024
+          Image: !Join [ '', [ !Ref 'AWS::AccountId', '.dkr.ecr.', !Ref 'AWS::Region', '.amazonaws.com/active-mq-to-amazon-mq/active-mq:latest' ] ]
+          PortMappings:
+            - ContainerPort: 8161
+            - ContainerPort: 61616
+          Environment:
+            - Name: AMAZONMQ_USER
+              Value: !Ref MQBrokerUserName
+            - Name: AMAZONMQ_PASSWORD
+              Value: !Ref MQBrokerPassword
+            - Name: AMAZONMQ_URL
+              Value: !Sub 'static:(ssl://${AmazonMQBroker}-1.mq.${AWS::Region}.amazonaws.com:61617)'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogsGroupOP
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: apache-active-mq-broker-task
+
+  CloudWatchLogsGroupOP:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: cmr/ecs/apache-active-mq-cluster
+      RetentionInDays: 30
+
+  ApacheActiveMQECSServiceOP:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: apache-active-mq-broker-service
+      Cluster: !Ref ApacheActiveMQECSClusterOP
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ApacheActiveMQSecurityGroupOP
+          Subnets:
+            - !Ref PublicSubnet1OP
+            - !Ref PublicSubnet2OP
+      TaskDefinition: !Ref ApacheActiveMQECSTaskDefinitionOP
+
+Outputs:
+  VPCRef:
+    Description: The reference to the created VPC.
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${Stage}:JMS-BRIDGE:VPC'
+
+  PublicSubnet1Ref:
+    Description: The reference to the created public subnet 1.
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub '${Stage}:JMS-BRIDGE:PublicSubnet1'
+
+  PublicSubnet2Ref:
+    Description: The reference to the created public subnet 2.
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub '${Stage}:JMS-BRIDGE:PublicSubnet2'
+
+  AmazonMQBrokerUserNameRef:
+    Description: The reference to the Amazon MQ broker user name.
+    Value: !Ref MQBrokerUserName
+    Export:
+      Name: !Sub '${Stage}:JMS-BRIDGE:AmazonMQBrokerUserName'
+
+  AmazonMQBrokerURLRef:
+    Description: The reference to the Amazon MQ broker OpenWire URL.
+    Value: !Sub 'failover:(ssl://${AmazonMQBroker}-1.mq.${AWS::Region}.amazonaws.com:61617)'
+    Export:
+      Name: !Sub '${Stage}:JMS-BRIDGE:AmazonMQBrokerURL'
+
+  ApacheActiveMQBrokerUserNameRef:
+    Description: The reference to the Apache Active MQ broker user name.
+    Value: !Ref MQBrokerUserName
+    Export:
+      Name: !Sub '${Stage}:JMS-BRIDGE:ApacheActiveMQBrokerUserName'
+
+  ApacheActiveMQConsoleURLRef:
+    Description: The reference to the Apache Active MQ broker console URL.
+    Value: !Sub 'http://...'
+    Export:
+      Name: !Sub '${Stage}:JMS-BRIDGE:ApacheActiveMQConsoleURL'
