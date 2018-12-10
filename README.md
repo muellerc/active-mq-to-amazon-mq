@@ -1,4 +1,4 @@
-# JMS Bridge Sample
+# Build a hybrid cloud using network of brokers
 
 ## Architecture
 
