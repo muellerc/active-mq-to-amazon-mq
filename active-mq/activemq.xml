@@ -82,11 +82,8 @@
                 networkTTL="3"
                 dynamicOnly="false">
                 <staticallyIncludedDestinations>
-                    <queue physicalName="queuename"/>
+                    <queue physicalName=">"/>
                 </staticallyIncludedDestinations> 
-                <excludedDestinations>
-                      <queue physicalName=">" />
-                </excludedDestinations>
             </networkConnector>
         </networkConnectors>
 

@@ -45,18 +45,12 @@ public class Bootstrap {
                             message.getJMSCorrelationID(), 
                             message.getJMSMessageID(), 
                             message.getJMSReplyTo()));
-                    if (message instanceof TextMessage) {
-                        TextMessage textMsg = (TextMessage) message;
-                        System.out.println(
-                            String.format("received message with body '%s'",
-                                textMsg.getBody(String.class)));
-                    }
 
                     TextMessage responseMsg = session.createTextMessage(String.format("Current time in millis is %s", System.currentTimeMillis()));
                     responseMsg.setJMSCorrelationID(message.getJMSCorrelationID());
 
                     MessageProducer producer = session.createProducer(message.getJMSReplyTo());
-                    producer.send(message);
+                    producer.send(responseMsg);
                     message.acknowledge();
 
                     System.out.println(

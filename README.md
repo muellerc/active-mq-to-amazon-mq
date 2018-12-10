@@ -132,10 +132,9 @@ Run the first command to launch the AWS CloudFormation template. The second comm
 ```bash
 aws cloudformation create-stack \
     --stack-name active-mq-to-amazon-mq \
-    --template-body file://master.yaml \
     --capabilities CAPABILITY_IAM \
-    --parameters ParameterKey=MQBrokerUserName,ParameterValue=<MQBrokerUserName> \
-    --parameters ParameterKey=MQBrokerPassword,ParameterValue=<MQBrokerPassword>
+    --parameters ParameterKey=MQBrokerUserName,ParameterValue=<MQBrokerUserName> ParameterKey=MQBrokerPassword,ParameterValue=<MQBrokerPassword> \
+    --template-body file://master.yaml
 
 aws cloudformation wait stack-create-complete \
     --stack-name active-mq-to-amazon-mq
@@ -143,6 +142,16 @@ aws cloudformation wait stack-create-complete \
 
 ### 6. Test the sample
 
-Open a new tab and got to your Apache Active MQ broker console (your on-premises broker). You can look-up the URL from your CloudFormation outputs.  
-To access the web console, provide the Apache Active MQ broker user and password.  
-You can use this web console to send messages to the broker and listen for responses.
+Open a new tab and got to your Apache Active MQ broker console (your on-premises broker). You can look-up the IP address from your ECS web console [here](https://console.aws.amazon.com/ecs/home?#/clusters/apache-active-mq-cluster/tasks/details), by selecting the task and look-up the public IP. 
+
+http://\<ECS Task IP\>:8161/
+
+* User: admin
+* Password: admin
+
+Click **Send** and provide the following parameter:
+* Destination: DEMO.QUEUE1
+* Correlation ID: 1
+* ReplyTo: DEMO.QUEUE2
+
+and click **Send** again. Klick on **Queue** to refresh the page. You should see something like this:

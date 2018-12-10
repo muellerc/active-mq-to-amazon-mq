@@ -9,13 +9,11 @@ Parameters:
 
   MQBrokerUserName:
     Type: String
-    Default: AmazonMQBrokerUserName
     Description: The name of the Amazon MQ broker user.
 
   MQBrokerPassword:
     NoEcho: true
     Type: String
-    Default: AmazonMQBrokerPassword
     Description: The password of the Amazon MQ broker user.
 
 Resources:
