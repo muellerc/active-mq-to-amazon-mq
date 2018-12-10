@@ -1,5 +1,14 @@
 # JMS Bridge Sample
 
+## Architecture
+
+Please read this blog post from my AWSome colleage Greg Share about this topic:
+[Running ActiveMQ in a Hybrid Cloud Environment with Amazon MQ](https://aws.amazon.com/blogs/compute/running-activemq-in-a-hybrid-cloud-environment-with-amazon-mq/)
+
+In this example, we will set-up and architecture which looks like the following:
+
+![JMS Bridge Sample architecture](/images/architecture.png)
+
 ## Go Build!
 
 To build and run this example, you have to follow the steps below:
@@ -151,7 +160,8 @@ http://\<ECS Task IP\>:8161/
 
 Click **Send** and provide the following parameter:
 * Destination: DEMO.QUEUE1
+* Queue or Topic: Queue
 * Correlation ID: 1
 * ReplyTo: DEMO.QUEUE2
 
-and click **Send** again. Klick on **Queue** to refresh the page. You should see something like this:
+and click **Send** again. Klick on **Queues** to refresh the page. You should see something like this:
